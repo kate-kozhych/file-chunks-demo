@@ -4,11 +4,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 internal class MetaFetcher(private val client: OkHttpClient) {
-
     fun fetch(url: String): FileMeta {
-        val headResponse = client.newCall(
-            Request.Builder().url(url).head().build()
-        ).execute()
+        val headResponse =
+            client.newCall(
+                Request.Builder().url(url).head().build(),
+            ).execute()
 
         if (headResponse.code == 405) return probeViaGet(url)
         return headResponse.use { parseFileMeta(it) }
@@ -16,11 +16,12 @@ internal class MetaFetcher(private val client: OkHttpClient) {
 
     private fun probeViaGet(url: String): FileMeta {
         return client.newCall(
-            Request.Builder().url(url).header("Range", "bytes=0-1023").build()
+            Request.Builder().url(url).header("Range", "bytes=0-1023").build(),
         ).execute().use { response ->
             val rangeSupported = response.code == 206
-            val totalLength = response.header("Content-Range")
-                ?.substringAfter("/")?.toLongOrNull()
+            val totalLength =
+                response.header("Content-Range")
+                    ?.substringAfter("/")?.toLongOrNull()
             FileMeta(totalLength, rangeSupported, response.header("ETag"))
         }
     }

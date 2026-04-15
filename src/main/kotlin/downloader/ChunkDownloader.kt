@@ -7,34 +7,39 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 internal class ChunkDownloader(private val client: OkHttpClient) {
-
     data class ChunkResult(val index: Int, val bytes: ByteArray, val durationMs: Long)
 
     suspend fun download(
         url: String,
         range: LongRange,
         index: Int,
-        retryPolicy: RetryPolicy
-    ): ChunkResult = withContext(Dispatchers.IO) {
-        var lastError: Exception? = null
+        retryPolicy: RetryPolicy,
+    ): ChunkResult =
+        withContext(Dispatchers.IO) {
+            var lastError: Exception? = null
 
-        repeat(retryPolicy.maxAttempts + 1) { attempt ->
-            try {
-                return@withContext downloadOnce(url, range, index)
-            } catch (e: Exception) {
-                lastError = e
-                delay(retryPolicy.delayMs(attempt))
+            repeat(retryPolicy.maxAttempts + 1) { attempt ->
+                try {
+                    return@withContext downloadOnce(url, range, index)
+                } catch (e: Exception) {
+                    lastError = e
+                    delay(retryPolicy.delayMs(attempt))
+                }
             }
+            throw ChunkDownloadException("Chunk $index failed after ${retryPolicy.maxAttempts} retries", lastError)
         }
-        throw ChunkDownloadException("Chunk $index failed after ${retryPolicy.maxAttempts} retries", lastError)
-    }
 
-    private fun downloadOnce(url: String, range: LongRange, index: Int): ChunkResult {
+    private fun downloadOnce(
+        url: String,
+        range: LongRange,
+        index: Int,
+    ): ChunkResult {
         val start = System.currentTimeMillis()
-        val request = Request.Builder()
-            .url(url)
-            .header("Range", "bytes=${range.first}-${range.last}")
-            .build()
+        val request =
+            Request.Builder()
+                .url(url)
+                .header("Range", "bytes=${range.first}-${range.last}")
+                .build()
 
         return client.newCall(request).execute().use { response ->
             if (response.code != 206) throw UnexpectedResponseException(response.code)
@@ -47,5 +52,7 @@ internal class ChunkDownloader(private val client: OkHttpClient) {
 }
 
 class ChunkDownloadException(message: String, cause: Throwable?) : Exception(message, cause)
+
 class UnexpectedResponseException(code: Int) : Exception("Unexpected HTTP $code")
+
 class IncompleteChunkException(expected: Long, actual: Long) : Exception("Expected $expected bytes, got $actual")

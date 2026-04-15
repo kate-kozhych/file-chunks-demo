@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm") version "1.9.22"
     application
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.0"
 }
 
 java {
@@ -26,4 +27,13 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+ktlint {
+    version.set("1.2.1")
+    android.set(false)
+    outputToConsole.set(true)
+    filter {
+        exclude("**/generated/**")
+    }
 }
