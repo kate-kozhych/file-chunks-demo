@@ -1,5 +1,16 @@
 plugins {
     kotlin("jvm") version "1.9.22"
+    application
+}
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+application {
+    mainClass.set("downloader.MainKt")
 }
 
 repositories { mavenCentral() }
