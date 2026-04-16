@@ -13,6 +13,7 @@ fun main() {
             .parallelism(4)
             .chunkSize(20)
             .retryPolicy(RetryPolicy.exponential(3))
+            .adaptiveChunking(true)
             .build()
 
     kotlinx.coroutines.runBlocking {
