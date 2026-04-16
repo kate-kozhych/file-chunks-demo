@@ -1,4 +1,4 @@
-package downloader
+package downloader.internal.http
 
 import okhttp3.OkHttpClient
 import okhttp3.Request

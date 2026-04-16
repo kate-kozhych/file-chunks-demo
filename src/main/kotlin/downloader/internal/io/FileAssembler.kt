@@ -1,4 +1,4 @@
-package downloader
+package downloader.internal.io
 
 import java.io.RandomAccessFile
 import java.nio.file.Path

@@ -1,5 +1,9 @@
-package downloader
+package downloader.internal.http
 
+import downloader.api.RetryPolicy
+import downloader.exception.ChunkDownloadException
+import downloader.exception.IncompleteChunkException
+import downloader.exception.UnexpectedResponseException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -50,9 +54,3 @@ internal class ChunkDownloader(private val client: OkHttpClient) {
         }
     }
 }
-
-class ChunkDownloadException(message: String, cause: Throwable?) : Exception(message, cause)
-
-class UnexpectedResponseException(code: Int) : Exception("Unexpected HTTP $code")
-
-class IncompleteChunkException(expected: Long, actual: Long) : Exception("Expected $expected bytes, got $actual")
