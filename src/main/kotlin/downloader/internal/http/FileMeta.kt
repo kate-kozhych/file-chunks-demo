@@ -1,6 +1,6 @@
-package downloader
+package downloader.internal.http
 
-data class FileMeta(
+internal data class FileMeta(
     val contentLength: Long?,
     val acceptsRanges: Boolean,
     val etag: String?,

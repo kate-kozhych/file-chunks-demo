@@ -1,4 +1,4 @@
-package downloader
+package downloader.api
 
 data class RetryPolicy(
     val maxAttempts: Int,
