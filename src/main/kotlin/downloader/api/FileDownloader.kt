@@ -4,6 +4,7 @@ import downloader.exception.ChunkDownloadException
 import downloader.internal.http.ChunkDownloader
 import downloader.internal.http.MetaFetcher
 import downloader.internal.io.FileAssembler
+import downloader.internal.strategy.AdaptiveChunkStrategy
 import downloader.internal.strategy.ChunkStrategy
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -26,9 +27,11 @@ class FileDownloader private constructor(
     private val chunkSize: Long,
     private val retryPolicy: RetryPolicy,
     private val client: OkHttpClient,
+    private val adaptiveChunking: Boolean,
 ) {
     private val metaFetcher = MetaFetcher(client)
     private val chunkDownloader = ChunkDownloader(client)
+    private val adaptiveStrategy = AdaptiveChunkStrategy(initialChunkSize = chunkSize)
 
     fun download(
         url: String,
@@ -54,11 +57,16 @@ class FileDownloader private constructor(
                 return@channelFlow
             }
 
-            val strategy = ChunkStrategy(chunkSize)
-            val ranges = strategy.split(meta.contentLength)
             val assembler = FileAssembler(outputPath)
             val totalRetries = AtomicInteger(0)
             val bytesDownloaded = AtomicInteger(0)
+
+            val ranges =
+                if (adaptiveChunking) {
+                    buildAdaptiveRanges(url, meta.contentLength, assembler, bytesDownloaded)
+                } else {
+                    ChunkStrategy(chunkSize).split(meta.contentLength)
+                }
 
             send(DownloadEvent.Started(meta.contentLength, ranges.size))
 
@@ -124,6 +132,38 @@ class FileDownloader private constructor(
             send(DownloadEvent.Finished(report))
         }
 
+    private suspend fun buildAdaptiveRanges(
+        url: String,
+        totalBytes: Long,
+        assembler: FileAssembler,
+        bytesDownloaded: AtomicInteger,
+    ): List<LongRange> {
+        val probeRanges = adaptiveStrategy.probeRanges(totalBytes)
+
+        val probeDurations =
+            coroutineScope {
+                probeRanges.mapIndexed { index, range ->
+                    async {
+                        val result = chunkDownloader.download(url, range, index, RetryPolicy.fixed(0))
+                        assembler.write(range.first, result.bytes)
+                        bytesDownloaded.addAndGet(result.bytes.size)
+                        result.durationMs
+                    }
+                }.awaitAll()
+            }
+
+        val adaptedSize =
+            adaptiveStrategy.computeAdaptedSize(
+                probeDurationsMs = probeDurations,
+                probeSizeBytes = probeRanges.first().let { it.last - it.first + 1 },
+            )
+
+        val probeEnd = probeRanges.last().last + 1
+        val remainingRanges = adaptiveStrategy.remainingRanges(totalBytes, probeEnd, adaptedSize)
+
+        return probeRanges + remainingRanges
+    }
+
     private fun fallbackDownload(
         url: String,
         outputPath: Path,
@@ -154,6 +194,7 @@ class FileDownloader private constructor(
         private var chunkSize: Long = 512 * 1024
         private var retryPolicy: RetryPolicy = RetryPolicy.fixed(3)
         private var client: OkHttpClient = OkHttpClient()
+        private var adaptiveChunking: Boolean = false
 
         fun parallelism(value: Int) = apply { parallelism = value }
 
@@ -163,6 +204,8 @@ class FileDownloader private constructor(
 
         fun httpClient(client: OkHttpClient) = apply { this.client = client }
 
-        fun build() = FileDownloader(parallelism, chunkSize, retryPolicy, client)
+        fun adaptiveChunking(enabled: Boolean) = apply { adaptiveChunking = enabled }
+
+        fun build() = FileDownloader(parallelism, chunkSize, retryPolicy, client, adaptiveChunking)
     }
 }
