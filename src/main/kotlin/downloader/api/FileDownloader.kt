@@ -52,7 +52,8 @@ class FileDownloader private constructor(
             val startTime = System.currentTimeMillis()
             val meta = metaFetcher.fetch(url)
 
-            if (!meta.acceptsRanges || meta.contentLength == null) {
+            val contentLength = meta.contentLength ?: 0L
+            if (!meta.acceptsRanges || contentLength <= 0L) {
                 send(fallbackDownload(url, outputPath, startTime))
                 return@channelFlow
             }
@@ -63,12 +64,12 @@ class FileDownloader private constructor(
 
             val ranges =
                 if (adaptiveChunking) {
-                    buildAdaptiveRanges(url, meta.contentLength, assembler, bytesDownloaded)
+                    buildAdaptiveRanges(url, contentLength, assembler, bytesDownloaded)
                 } else {
-                    ChunkStrategy(chunkSize).split(meta.contentLength)
+                    ChunkStrategy(chunkSize).split(contentLength)
                 }
 
-            send(DownloadEvent.Started(meta.contentLength, ranges.size))
+            send(DownloadEvent.Started(contentLength, ranges.size))
 
             try {
                 coroutineScope {
@@ -93,8 +94,8 @@ class FileDownloader private constructor(
                                             assembler.write(range.first, result.bytes)
 
                                             val downloaded = bytesDownloaded.addAndGet(result.bytes.size).toLong()
-                                            val percent = (downloaded * 100 / meta.contentLength).toInt()
-                                            send(DownloadEvent.ChunkCompleted(index, downloaded, meta.contentLength, percent))
+                                            val percent = (downloaded * 100 / contentLength).toInt()
+                                            send(DownloadEvent.ChunkCompleted(index, downloaded, contentLength, percent))
                                             break
                                         } catch (e: Exception) {
                                             lastError = e
@@ -123,7 +124,7 @@ class FileDownloader private constructor(
 
             val report =
                 DownloadReport(
-                    totalBytes = meta.contentLength,
+                    totalBytes = contentLength,
                     durationMs = System.currentTimeMillis() - startTime,
                     chunksCount = ranges.size,
                     retries = totalRetries.get(),
