@@ -2,7 +2,6 @@ package downloader.internal.http
 
 import downloader.api.RetryPolicy
 import downloader.exception.ChunkDownloadException
-import downloader.exception.UnexpectedResponseException
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
