@@ -89,7 +89,6 @@ class FileDownloader private constructor(
                                                     url,
                                                     range,
                                                     index,
-                                                    RetryPolicy.fixed(0),
                                                 )
                                             assembler.write(range.first, result.bytes)
 
@@ -120,6 +119,8 @@ class FileDownloader private constructor(
             } catch (e: Exception) {
                 outputPath.deleteIfExists()
                 throw e
+            } finally {
+                assembler.close()
             }
 
             val report =
@@ -145,7 +146,7 @@ class FileDownloader private constructor(
             coroutineScope {
                 probeRanges.mapIndexed { index, range ->
                     async {
-                        val result = chunkDownloader.download(url, range, index, RetryPolicy.fixed(0))
+                        val result = chunkDownloader.download(url, range, index)
                         assembler.write(range.first, result.bytes)
                         bytesDownloaded.addAndGet(result.bytes.size)
                         result.durationMs
