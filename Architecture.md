@@ -46,7 +46,6 @@ FileDownloader.builder()
 
 All fields have safe defaults. The builder separates construction from execution and makes optional configuration explicit.
 
----
 
 ### 2. channelFlow for progress, not callbacks
 
