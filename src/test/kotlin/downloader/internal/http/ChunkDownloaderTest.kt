@@ -1,7 +1,7 @@
 package downloader.internal.http
 
-import downloader.api.RetryPolicy
-import downloader.exception.ChunkDownloadException
+import downloader.exception.IncompleteChunkException
+import downloader.exception.UnexpectedResponseException
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -18,8 +18,6 @@ import kotlin.test.assertTrue
 class ChunkDownloaderTest {
     private lateinit var server: MockWebServer
     private val downloader = ChunkDownloader(OkHttpClient())
-    private val noRetry = RetryPolicy.fixed(0)
-    private val twoRetries = RetryPolicy.fixed(2, 0L)
 
     @BeforeEach
     fun setup() {
@@ -43,7 +41,7 @@ class ChunkDownloaderTest {
                     .setHeader("Content-Range", "bytes 0-1023/1024"),
             )
 
-            val result = downloader.download(serverUrl(), 0L..1023L, 0, noRetry)
+            val result = downloader.download(serverUrl(), 0L..1023L, 0)
 
             assertEquals(1024, result.bytes.size)
             assertTrue(result.bytes.contentEquals(data))
@@ -60,7 +58,7 @@ class ChunkDownloaderTest {
                     .setHeader("Content-Range", "bytes 10-14/100"),
             )
 
-            downloader.download(serverUrl(), 10L..14L, 0, noRetry)
+            downloader.download(serverUrl(), 10L..14L, 0)
 
             val request = server.takeRequest()
             assertEquals("bytes=10-14", request.getHeader("Range"))
@@ -75,61 +73,24 @@ class ChunkDownloaderTest {
                     .setBody(Buffer().write("full file".toByteArray())),
             )
 
-            assertFailsWith<ChunkDownloadException> {
-                downloader.download(serverUrl(), 0L..4L, 0, noRetry)
+            assertFailsWith<UnexpectedResponseException> {
+                downloader.download(serverUrl(), 0L..4L, 0)
             }
         }
 
     @Test
-    fun `incomplete chunk retried`() =
+    fun `incomplete chunk throws`() =
         runTest {
-            val full = "hello world".toByteArray()
             val partial = "hel".toByteArray()
-
             server.enqueue(
                 MockResponse()
                     .setResponseCode(206)
                     .setBody(Buffer().write(partial))
                     .setHeader("Content-Range", "bytes 0-10/100"),
             )
-            server.enqueue(
-                MockResponse()
-                    .setResponseCode(206)
-                    .setBody(Buffer().write(full))
-                    .setHeader("Content-Range", "bytes 0-10/100"),
-            )
 
-            val result = downloader.download(serverUrl(), 0L..10L, 0, twoRetries)
-
-            assertEquals(11, result.bytes.size)
-            assertTrue(result.bytes.contentEquals(full))
-        }
-
-    @Test
-    fun `retry recovers`() =
-        runTest {
-            val data = Random.nextBytes(512)
-            server.enqueue(MockResponse().setResponseCode(500))
-            server.enqueue(
-                MockResponse()
-                    .setResponseCode(206)
-                    .setBody(Buffer().write(data))
-                    .setHeader("Content-Range", "bytes 0-511/512"),
-            )
-
-            val result = downloader.download(serverUrl(), 0L..511L, 0, twoRetries)
-
-            assertEquals(512, result.bytes.size)
-            assertTrue(result.bytes.contentEquals(data))
-        }
-
-    @Test
-    fun `retries exhausted`() =
-        runTest {
-            repeat(3) { server.enqueue(MockResponse().setResponseCode(500)) }
-
-            assertFailsWith<ChunkDownloadException> {
-                downloader.download(serverUrl(), 0L..1023L, 0, twoRetries)
+            assertFailsWith<IncompleteChunkException> {
+                downloader.download(serverUrl(), 0L..10L, 0)
             }
         }
 
