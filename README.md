@@ -8,6 +8,10 @@ Kotlin SDK for parallel chunked file downloads over HTTP with progress streaming
 - **OkHttp** - HTTP client
 - **JUnit 5** + **MockWebServer** - testing
 
+## Project Status
+
+This project was implemented as part of a development internship assignment.  
+After the initial submission, the downloader was further improved based on a technical self-review, with a focus on reliability, coroutine-based concurrency, retry handling, and adaptive chunking correctness.
 
 ## Run
 

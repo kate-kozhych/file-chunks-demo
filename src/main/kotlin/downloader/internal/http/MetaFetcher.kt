@@ -1,18 +1,20 @@
 package downloader.internal.http
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
 internal class MetaFetcher(private val client: OkHttpClient) {
-    fun fetch(url: String): FileMeta {
-        val headResponse =
-            client.newCall(
-                Request.Builder().url(url).head().build(),
-            ).execute()
+    suspend fun fetch(url: String): FileMeta =
+        withContext(Dispatchers.IO) {
+            val headResponse =
+                client.newCall(
+                    Request.Builder().url(url).head().build(),
+                ).execute()
 
-        if (headResponse.code == 405) return probeViaGet(url)
-        return headResponse.use { parseFileMeta(it) }
-    }
+            if (headResponse.code == 405) probeViaGet(url) else headResponse.use { parseFileMeta(it) }
+        }
 
     private fun probeViaGet(url: String): FileMeta {
         return client.newCall(

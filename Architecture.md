@@ -65,25 +65,27 @@ The consumer gets structured data, this makes it composable: filter, map, forwar
 
 `ChunkDownloader.download()` makes exactly one HTTP request and either returns a result or throws. It has no knowledge of retry policy.
 
-All retry logic lives in `FileDownloader`'s orchestration loop: the while loop, delay, attempt counter, and `ChunkRetrying` event emission are all there. 
+All retry logic lives in `downloadChunkWithRetry()` - a shared helper in `FileDownloader` that handles the while loop, delay, attempt counter, and `ChunkRetrying` event emission. It is used for all remaining chunks in both static and adaptive mode.
+
+Probe chunks in adaptive mode are intentionally downloaded without retry. Retrying a probe would corrupt the timing data used for adaptation: a failed first attempt followed by a fast retry would skew the measured throughput, and the adapted chunk size would not reflect actual network conditions.
 
 ### 4. FileAssembler holds one open RAF, synchronized writes
 
 ```kotlin
 internal class FileAssembler(outputPath: Path) {
     private val raf = RandomAccessFile(outputPath.toFile(), "rw")
- 
+
     @Synchronized
     fun write(offset: Long, bytes: ByteArray) {
         raf.seek(offset)
         raf.write(bytes)
     }
- 
+
     fun close() = raf.close()
 }
 ```
 
-One `RandomAccessFile` is opened at construction and closed explicitly via `close()`. In `FileDownloader`, this happens in a `finally`.
+One `RandomAccessFile` is opened at construction and closed explicitly via `close()`. In `FileDownloader`, this happens in a `finally` block that covers the entire download, including the adaptive probe phase..
 
 `@Synchronized` handles concurrent writes from parallel chunk coroutines. Each write seeks to its own offset, so chunks can arrive and be written in any order without coordination beyond the lock.
 
@@ -100,16 +102,22 @@ Some servers reject HEAD but support Range GET. `MetaFetcher` handles this: if H
 
 ### 7. Adaptive chunk sizing: probe-and-adjust
 
-When `adaptiveChunking = true`, the first two chunks use the configured initial size and are downloaded before the rest. Their durations are measured. `AdaptiveChunkStrategy.computeAdaptedSize` computes:
+When `adaptiveChunking = true`, the download proceeds in two phases.
+
+**Probe phase.** The first two chunks are downloaded via `downloadProbes()`, a separate path from the main download loop. Probe chunks are written to the file and their bytes count toward total progress, but no `ChunkCompleted` events are emitted and no retry policy is applied. `Started` is sent after probes complete, so the event sequence is always `Started → ChunkCompleted* → Finished` regardless of mode.
+
+**Adaptation.** Probe durations are passed to `AdaptiveChunkStrategy.computeAdaptedSize`:
 
 ```
 throughput = probeBytes / avgDurationMs   (bytes/ms)
 adaptedSize = throughput * targetChunkDurationMs
 ```
 
-Target duration is about 2000 ms. The result is clamped to `[64 KB, 8 MB]`. The remaining ranges are then split using the adapted size. This means on a fast connection the chunks grow (fewer requests, less overhead); on a slow connection they shrink (faster retry if one fails).
+Target duration is 2000 ms. The result is clamped to `[64 KB, 8 MB]`. Remaining ranges are split using the adapted size and downloaded through the normal retry-capable path with indices starting at `probeRanges.size`, so chunk indices in progress events are globally unique across both phases.
 
-This is implemented as a pure function in `AdaptiveChunkStrategy`, it is easy to test in isolation without any HTTP involved.
+`AdaptiveChunkStrategy` is a pure class with no HTTP dependency, making it straightforward to test in isolation.
+
+**Trade-off.** Probe failure is not retried and immediately aborts the download. On unreliable connections, prefer `adaptiveChunking(false)` and rely on the standard retry policy.
 
 
 ### 8. Semaphore for parallelism
@@ -171,3 +179,11 @@ A cleaner scaling pattern for future would be to create a fixed pool of worker c
 On failure, the partial output file is deleted and the caller must restart from zero. This is the right default for simplicity, but for production downloaders I would checkpoint completed chunks so a restart can skip already-downloaded ranges.
 
 Adding this would change `FileAssembler`'s contract (it would need to accept a pre-existing partial file) and require a new public API for resuming a previous session.
+
+### Contention on FileAssembler writes
+
+`FileAssembler` uses `@Synchronized` on a single `RandomAccessFile`, which means all concurrent chunk coroutines serialize on one JVM-level monitor when writing. At high parallelism with small chunk sizes this becomes a bottleneck: coroutines finish their HTTP requests but queue up waiting for the lock. A better approach in production is `FileChannel` with positional writes (`FileChannel.write(buffer, position)`), which allows truly concurrent writes to different offsets without explicit locking.
+
+### ETag is parsed but unused
+
+`MetaFetcher` extracts the `ETag` header and stores it in `FileMeta`, but `FileDownloader` never reads it. I left it here for a production SDK, where ETag serves two purposes: detecting mid-download file changes (if the server rotates the file between the HEAD request and chunk downloads, chunks from different versions get assembled into a corrupt file), and as a cache key for resume semantics (a resumed download should verify the file has not changed since the previous session). Both use cases require threading ETag through to the download loop and sending it as `If-Match` on each range request.
